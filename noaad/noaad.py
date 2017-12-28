@@ -15,6 +15,8 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
+from __future__ import print_function, division
+
 import os
 import logging
 import trollius as asyncio
@@ -22,6 +24,7 @@ from trollius import From
 import urllib2
 import ephem
 import datetime as dt
+import math
 
 
 class NOAADaemon(object):
@@ -30,11 +33,9 @@ class NOAADaemon(object):
 
     * Initialize and update NORAD data: on startup and every 24 hours at midnight (UTC)
 
-    * Plan recording sessions: we abort running recording in favor of
-        passes with high maximum elevation. This will occasionally lead to
-        incomplete images, but should maximize the overall quality, as
-        concurrent high elevation passes are relatively unlikely.
-        New schedules are planned every time the NORAD data is updated.
+    * Plan recording sessions: passes are recorded on a first-come first-serve basis.
+        This might produce incomplete images, since only one pass can be recorded
+        at the same time.
 
     * Control the GNU Radio receiver
 
@@ -47,13 +48,17 @@ class NOAADaemon(object):
         self.log = logging.getLogger('NOAADaemon')
         self.tledata = dict()
 
-        self.obs = ephem.Observer()
-        self.obs.lat = config['Location']['longitude']
-        self.obs.lon = config['Location']['latitude']
-        self.obs.elevation = float(self.config['Location']['altitude'])
+        self.observer = ephem.Observer()
+        self.observer.lat = config['Location']['latitude']
+        self.observer.lon = config['Location']['longitude']
+        self.observer.elevation = float(self.config['Location']['altitude'])
+        self.observer.pressure = 0
 
-        # Tuples (max_elevation, task)
-        self.recordingTasks = []
+        self.tleFuture = None
+        self.testFuture = None
+
+        # A mapping satname -> task
+        self.recorderLock = asyncio.Lock()
 
 
     @asyncio.coroutine
@@ -61,6 +66,19 @@ class NOAADaemon(object):
         """ Main initializer """
         # Download the TLE data
         yield From(self.updateTLE())
+        yield From(self.test())
+
+        for name in self.tledata:
+            asyncio.ensure_future(self.recordPass(name))
+
+
+    @asyncio.coroutine
+    def test(self):
+        tasks = asyncio.Task.all_tasks()
+        print('Number of tasks:', len(tasks))
+
+        ts = dt.datetime.utcnow() + dt.timedelta(seconds=10)
+        self.testFuture = asyncio.ensure_future(self.scheduleAt(self.test(), ts))
 
 
     @asyncio.coroutine
@@ -74,12 +92,69 @@ class NOAADaemon(object):
 
 
     @asyncio.coroutine
-    def updateTLE(self, at=None):
+    def scheduleAt(self, coro, at):
+        """
+        Execute a coroutine at a certain time.
+        """
+        yield From(self.waitUntil(at))
+        yield From(coro)
+
+
+    @asyncio.coroutine
+    def recordPass(self, satname):
+        """
+        Try to record a pass. This will only succeed if no other recording
+        is in progress, as only one recorder can access the receiver.
+        When the task terminates, a new one is schedules for the next pass.
+        """
+        sat = self.tledata.get(satname, None)
+        if sat is None:
+            self.log('Satellite {} not in TLE data anymore'.format(satname))
+            return
+
+        self.observer.date = dt.datetime.utcnow()
+        p = self.observer.next_pass(sat)
+        aos = dt.datetime.strptime(str(p[0]), '%Y/%m/%d %H:%M:%S')
+        los = dt.datetime.strptime(str(p[4]), '%Y/%m/%d %H:%M:%S')
+
+        if los < aos:
+            aos = dt.datetime.utcnow()
+
+        # Wait until the satellite enters our airspace
+        self.log.info('Schedule recording of {} for {}'.format(satname, aos.strftime('%H:%M')))
+        yield From(self.waitUntil(aos))
+
+        with (yield From(self.recorderLock)):
+            self.log.info('Start recording of {}'.format(satname))
+            # Check if there's still something left to record
+            while dt.datetime.utcnow() <= los:
+                # Calculate the current velocity of the satellite
+                self.observer.date = dt.datetime.utcnow()
+                sat.compute(self.observer)
+
+                # Calculate the doppler shift
+                
+                # See https://github.com/brandon-rhodes/pyephem/issues/34
+                vel = -sat.range_velocity * 1.055
+
+                c = 299792458
+                shift = math.sqrt((c + vel) / (c - vel))
+
+                frequency = float(self.config[satname]['frequency']) * shift
+
+                print('Receiving at {:03f} MHz'.format(frequency / 1000000))
+                yield From(asyncio.sleep(10))
+
+            self.log.info('Stop recording of {}'.format(satname))
+
+        ts = dt.datetime.utcnow() + dt.timedelta(minutes=3)
+        self.testFuture = asyncio.ensure_future(self.scheduleAt(self.recordPass(satname), ts))
+
+
+    @asyncio.coroutine
+    def updateTLE(self):
         """ Download new TLE data and write it to the configuration directory. """
-
-        if at is not None:
-            yield From(self.waitUntil(at))
-
+        self.log.info('Updating TLE data')
         try:
             r = urllib2.urlopen('https://celestrak.com/NORAD/elements/weather.txt', timeout=30)
             tledata = r.read()
@@ -88,13 +163,13 @@ class NOAADaemon(object):
 
             # Schedule the next update in 24 hours
             ts = dt.datetime.utcnow() + dt.timedelta(days=1)
-            yield From(self.tasks.put((ts, self.updateTLE())))
+            asyncio.ensure_future(self.scheduleAt(self.updateTLE(), ts))
 
         except Exception as e:
             self.log.error(e)
             # Something happened. Schedule another update in 10 minutes
             ts = dt.datetime.utcnow() + dt.timedelta(minutes=10)
-            yield From(self.tasks.put((ts, self.updateTLE())))
+            asyncio.ensure_future(self.scheduleAt(self.updateTLE(), ts))
 
         self.readTLE()
 

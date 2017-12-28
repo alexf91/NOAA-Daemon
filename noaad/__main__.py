@@ -31,7 +31,7 @@ from .noaad import NOAADaemon
 
 def main():
     setproctitle.setproctitle('noaad')
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
 
     # Some users might use XDG_CONFIG_HOME, so we check for it.
     xdgdir = os.getenv('XDG_CONFIG_HOME')
@@ -87,7 +87,7 @@ def main():
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(noaad())
-        #loop.run_forever()
+        loop.run_forever()
     except KeyboardInterrupt:
         pass
     finally:
