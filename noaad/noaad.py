@@ -47,62 +47,58 @@ class NOAADaemon(object):
         self.log = logging.getLogger('NOAADaemon')
         self.tledata = dict()
 
-        self.updateTask = None
+        self.obs = ephem.Observer()
+        self.obs.lat = config['Location']['longitude']
+        self.obs.lon = config['Location']['latitude']
+        self.obs.elevation = float(self.config['Location']['altitude'])
+
+        # Tuples (max_elevation, task)
+        self.recordingTasks = []
 
 
     @asyncio.coroutine
     def __call__(self):
         """ Main initializer """
         # Download the TLE data
-        rc = yield From(self.updateTLE())
-        if not rc:
-            self.log.error('Downloading TLE data failed')
-
-        rc = yield From(self.readTLE())
-        if not rc:
-            self.log.error('Reading TLE data failed')
-
-        self.updateTask = asyncio.async(self.dailyUpdate())
+        yield From(self.updateTLE())
 
 
     @asyncio.coroutine
-    def dailyUpdate(self):
-        """ Update TLE data every day at 0:00 UTC """
-        now = dt.datetime.utcnow()
-        tmrw = dt.datetime.combine(dt.date.today() + dt.timedelta(days=1), dt.time())
-
-        delta = (tmrw - now).total_seconds()
-        yield From(asyncio.sleep(delta))
-
-        while True:
-            rc = yield From(self.updateTLE())
-            if not rc:
-                self.log.error('Downloading TLE data failed')
-
-            rc = yield From(self.readTLE())
-            if not rc:
-                self.log.error('Reading TLE data failed')
-
-            yield From(asyncio.sleep(24 * 3600))
+    def waitUntil(self, target):
+        """
+        Wait at least until 'target', where 'target' is a
+        datetime.datetime object. All times are in UTC.
+        """
+        while dt.datetime.utcnow() < target:
+            yield From(asyncio.sleep(1))
 
 
     @asyncio.coroutine
-    def updateTLE(self):
+    def updateTLE(self, at=None):
         """ Download new TLE data and write it to the configuration directory. """
+
+        if at is not None:
+            yield From(self.waitUntil(at))
+
         try:
             r = urllib2.urlopen('https://celestrak.com/NORAD/elements/weather.txt', timeout=30)
             tledata = r.read()
             with open(os.path.join(self.config.cfgdir, 'satellites.tle'), 'w') as fp:
                 fp.write(tledata)
 
-            return True
+            # Schedule the next update in 24 hours
+            ts = dt.datetime.utcnow() + dt.timedelta(days=1)
+            yield From(self.tasks.put((ts, self.updateTLE())))
 
         except Exception as e:
             self.log.error(e)
-            return False
+            # Something happened. Schedule another update in 10 minutes
+            ts = dt.datetime.utcnow() + dt.timedelta(minutes=10)
+            yield From(self.tasks.put((ts, self.updateTLE())))
+
+        self.readTLE()
 
 
-    @asyncio.coroutine
     def readTLE(self):
         """
         Read TLE data from disk and populate the tledata dictionary.
@@ -111,7 +107,7 @@ class NOAADaemon(object):
         """
         tlepath = os.path.join(self.config.cfgdir, 'satellites.tle')
         if os.path.exists(tlepath):
-            with open(os.path.join(self.config.cfgdir, 'satellites.tle')) as fp:
+            with open(tlepath) as fp:
                 lines = [line.strip() for line in fp.readlines()]
 
             for i in range(0, len(lines), 3):

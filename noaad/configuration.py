@@ -21,12 +21,11 @@ import configparser
 default = configparser.ConfigParser()
 default['General'] = {
         'datadir': os.path.expanduser('~/noaad-data'),
-        'elevation': 5
     }
 default['Location'] = {
         'latitude': 0.0,
         'longitude': 0.0,
-        'altitude': 500
+        'altitude': 0
     }
 default['Receiver'] = {
         'samplerate': 1800000,
