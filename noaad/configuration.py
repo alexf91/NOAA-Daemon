@@ -21,6 +21,7 @@ import configparser
 default = configparser.ConfigParser()
 default['General'] = {
         'datadir': os.path.expanduser('~/noaad-data'),
+        'saveiq': 0
     }
 default['Location'] = {
         'latitude': 0.0,

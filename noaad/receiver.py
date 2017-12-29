@@ -49,6 +49,8 @@ class Receiver(gr.top_block):
         self.freq_corr = float(config['Receiver']['freq_corr'])
         self.dev_str = str(config['Receiver']['device_string'])
 
+        self.saveiq = bool(int(config['General']['saveiq']))
+
         self.config = config
 
         self.filter_sharpness = 8000
@@ -80,6 +82,10 @@ class Receiver(gr.top_block):
         # WAV file sink
         self.wavsink = blocks.wavfile_sink('/dev/null', 1, self.audio_rate, 16)
 
+        # Debug file sink needs to be created every time, so we only create it
+        # where it's actually needed.
+        self.iqsink = None
+
         # Connect everything
         self.connect((self.osmosrc, 0), (self.xlating, 0))
         self.connect((self.xlating, 0), (self.demod, 0))
@@ -91,9 +97,17 @@ class Receiver(gr.top_block):
         self.center_freq = float(self.config[satname]['frequency']) - self.offset
         self.osmosrc.set_center_freq(self.center_freq)
 
-        fname = '{}_{}.wav'.format(satname.replace(' ', '_'), dt.datetime.utcnow().strftime('%Y-%m-%d_%H:%M'))
+        now = dt.datetime.utcnow()
+
+        fname = '{}_{}.wav'.format(satname.replace(' ', '_'), now.strftime('%Y-%m-%d_%H:%M'))
         wavpath = os.path.join(self.config['General']['datadir'], fname).encode()
         self.wavsink.open(wavpath)
+
+        if self.saveiq:
+            dname = 'noaad_{}_{}.raw'.format(now.strftime('%Y%m%d_%H%M%S'), self.samp_rate)
+            iqpath = os.path.join(self.config['General']['datadir'], dname).encode()
+            self.iqsink = blocks.file_sink(gr.sizeof_gr_complex, iqpath, False)
+            self.connect((self.osmosrc, 0), (self.iqsink, 0))
 
         self.start()
 
@@ -103,6 +117,9 @@ class Receiver(gr.top_block):
         self.stop()
         self.wait()
         self.wavsink.close()
+
+        if self.saveiq:
+            self.disconnect(self.osmosrc)
 
 
     def setDopplerShift(self, f):
