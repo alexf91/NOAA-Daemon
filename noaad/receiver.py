@@ -53,8 +53,8 @@ class Receiver(gr.top_block):
 
         self.config = config
 
-        self.filter_sharpness = 8000
-        self.filter_bandwidth = 40000
+        self.filter_sharpness = 3000
+        self.filter_bandwidth = 25000
 
         # Initialize the hardware source
         self.osmosrc = osmosdr.source(self.dev_str)
@@ -69,14 +69,18 @@ class Receiver(gr.top_block):
         self.xlating = filter.freq_xlating_fir_filter_ccc(self.samp_rate // self.quad_rate, self.lowpass, int(self.offset), self.samp_rate)
 
         # FM demodulator
-        self.demod = analog.fm_demod_cf(
-                channel_rate=self.quad_rate,
-                audio_decim=self.quad_rate // self.audio_rate,
-                deviation=17000,
-                audio_pass=15000,
-                audio_stop=16000,
-                gain=1.0,
-                tau=0,
+        #self.demod = analog.fm_demod_cf(
+        #        channel_rate=self.quad_rate,
+        #        audio_decim=self.quad_rate // self.audio_rate,
+        #        deviation=17000,
+        #        audio_pass=15000,
+        #        audio_stop=16000,
+        #        gain=1.0,
+        #        tau=0,
+        #)
+        self.demod = analog.wfm_rcv(
+        	quad_rate=self.quad_rate,
+        	audio_decimation=self.quad_rate // self.audio_rate,
         )
 
         # WAV file sink
