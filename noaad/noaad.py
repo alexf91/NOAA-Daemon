@@ -26,6 +26,8 @@ import ephem
 import datetime as dt
 import math
 
+from receiver import Receiver
+
 
 class NOAADaemon(object):
     """
@@ -57,8 +59,8 @@ class NOAADaemon(object):
         self.tleFuture = None
         self.testFuture = None
 
-        # A mapping satname -> task
-        self.recorderLock = asyncio.Lock()
+        self.receiverLock = asyncio.Lock()
+        self.receiver = Receiver(self.config)
 
 
     @asyncio.coroutine
@@ -77,7 +79,11 @@ class NOAADaemon(object):
         tasks = asyncio.Task.all_tasks()
         print('Number of tasks:', len(tasks))
 
-        ts = dt.datetime.utcnow() + dt.timedelta(seconds=10)
+        #self.receiver.startRecording('NOAA 19')
+        #yield From(asyncio.sleep(10))
+        #self.receiver.stopRecording()
+
+        ts = dt.datetime.utcnow() + dt.timedelta(seconds=30)
         self.testFuture = asyncio.ensure_future(self.scheduleAt(self.test(), ts))
 
 
@@ -124,28 +130,31 @@ class NOAADaemon(object):
         self.log.info('Schedule recording of {} for {}'.format(satname, aos.strftime('%H:%M')))
         yield From(self.waitUntil(aos))
 
-        with (yield From(self.recorderLock)):
+        with (yield From(self.receiverLock)):
             self.log.info('Start recording of {}'.format(satname))
-            # Check if there's still something left to record
+            self.receiver.startRecording(satname)
+
             while dt.datetime.utcnow() <= los:
                 # Calculate the current velocity of the satellite
                 self.observer.date = dt.datetime.utcnow()
                 sat.compute(self.observer)
 
                 # Calculate the doppler shift
-                
                 # See https://github.com/brandon-rhodes/pyephem/issues/34
                 vel = -sat.range_velocity * 1.055
 
                 c = 299792458
-                shift = math.sqrt((c + vel) / (c - vel))
+                sf = math.sqrt((c + vel) / (c - vel))
 
-                frequency = float(self.config[satname]['frequency']) * shift
+                frequency = float(self.config[satname]['frequency'])
 
-                print('Receiving at {:03f} MHz'.format(frequency / 1000000))
+                shift = frequency * (sf - 1)
+                self.receiver.setDopplerShift(shift)
+
                 yield From(asyncio.sleep(10))
 
             self.log.info('Stop recording of {}'.format(satname))
+            self.receiver.stopRecording()
 
         ts = dt.datetime.utcnow() + dt.timedelta(minutes=3)
         self.testFuture = asyncio.ensure_future(self.scheduleAt(self.recordPass(satname), ts))

@@ -81,6 +81,9 @@ def main():
         print('Could not read configuration file', file=sys.stderr)
         return 1
 
+    if not os.path.exists(config['General']['datadir']):
+        os.makedirs(config['General']['datadir'])
+
     config.cfgdir = cfgdir
     noaad = NOAADaemon(config)
 

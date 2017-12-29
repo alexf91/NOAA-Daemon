@@ -28,10 +28,12 @@ default['Location'] = {
         'altitude': 0
     }
 default['Receiver'] = {
-        'samplerate': 1800000,
-        'device': 'rtl=0',
-        'ppm': 0,
-        'offset': 300000
+        'sample_rate': 1152000,
+        'quad_rate': 96000,
+        'audio_rate': 48000,
+        'offset': 300000,
+        'device_string': 'rtl=0',
+        'freq_corr': 0,
     }
 default['NOAA 15'] = {
         'frequency': 137.620e6
