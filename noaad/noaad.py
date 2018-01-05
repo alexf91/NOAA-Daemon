@@ -26,7 +26,7 @@ import ephem
 import datetime as dt
 import math
 
-from receiver import Receiver
+from .receiver import Receiver
 
 
 class NOAADaemon(object):

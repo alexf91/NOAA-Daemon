@@ -79,8 +79,8 @@ class Receiver(gr.top_block):
         #        tau=0,
         #)
         self.demod = analog.wfm_rcv(
-        	quad_rate=self.quad_rate,
-        	audio_decimation=self.quad_rate // self.audio_rate,
+                quad_rate=self.quad_rate,
+                audio_decimation=self.quad_rate // self.audio_rate,
         )
 
         # WAV file sink
@@ -102,13 +102,14 @@ class Receiver(gr.top_block):
         self.osmosrc.set_center_freq(self.center_freq)
 
         now = dt.datetime.utcnow()
+        datestr = now.strftime('%Y%m%d_%H%M%S')
 
-        fname = '{}_{}.wav'.format(satname.replace(' ', '_'), now.strftime('%Y-%m-%d_%H:%M'))
+        fname = '{}_{}.wav'.format(satname.replace(' ', '_'), datestr)
         wavpath = os.path.join(self.config['General']['datadir'], fname).encode()
         self.wavsink.open(wavpath)
 
         if self.saveiq:
-            dname = 'noaad_{}_{}.raw'.format(now.strftime('%Y%m%d_%H%M%S'), self.samp_rate)
+            dname = 'noaad_{}_{}.raw'.format(datestr, self.samp_rate)
             iqpath = os.path.join(self.config['General']['datadir'], dname).encode()
             self.iqsink = blocks.file_sink(gr.sizeof_gr_complex, iqpath, False)
             self.connect((self.osmosrc, 0), (self.iqsink, 0))
@@ -123,7 +124,7 @@ class Receiver(gr.top_block):
         self.wavsink.close()
 
         if self.saveiq:
-            self.disconnect(self.osmosrc)
+            self.disconnect(self.iqsink)
 
 
     def setDopplerShift(self, f):
